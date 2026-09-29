@@ -10,7 +10,8 @@ import java.time.LocalDate
 
 data class User(
     val id: String, val username: String, val displayName: String, val role: Role,
-    val supervisorId: String?, val active: Boolean = true, val mustChangePassword: Boolean = false
+    val supervisorId: String?, val active: Boolean = true, val mustChangePassword: Boolean = false,
+    val currentMonthSpks: Int = 0, val runningProspects: Int = 0
 )
 
 data class Spk(
@@ -112,6 +113,11 @@ class ApiClient {
     }
 
     suspend fun users(): List<User> = request("GET", "/api/users").getJSONArray("users").asObjects().map(::user)
+    suspend fun accountAction(id: String, action: String, password: String? = null) {
+        val body = JSONObject().put("id", id).put("action", action)
+        if (password != null) body.put("password", password)
+        request("PATCH", "/api/users", body)
+    }
     suspend fun createUser(username: String, name: String, role: Role, supervisorId: String?, password: String): User {
         val body = JSONObject().put("username", username.trim()).put("displayName", name.trim())
             .put("role", role.name.lowercase()).put("password", password)
@@ -146,7 +152,8 @@ class ApiClient {
 
     private fun user(o: JSONObject) = User(o.getString("id"), o.getString("username"), o.getString("displayName"),
         Role.valueOf(o.getString("role").uppercase()), o.nullableString("supervisorId"),
-        o.optBoolean("active", true), o.optBoolean("mustChangePassword"))
+        o.optBoolean("active", true), o.optBoolean("mustChangePassword"),
+        o.optInt("currentMonthSpks"), o.optInt("runningProspects"))
     private fun prospect(o: JSONObject) = Prospect(o.getString("id"), o.getString("consultantId"),
         o.getString("name"), o.getString("want"), o.getString("stage"), o.getString("status"))
     private fun spk(o: JSONObject) = Spk(

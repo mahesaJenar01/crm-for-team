@@ -10,7 +10,7 @@ export const POST = handle(async (request) => {
   const rateKey = hashRateKey(username, ip(request));
   const rate = await pool.query('select attempts, blocked_until from login_attempt where key_hash=$1', [rateKey]);
   if (rate.rows[0]?.blocked_until && new Date(rate.rows[0].blocked_until) > new Date()) throw new ApiError(429, 'Too many login attempts; try again later');
-  const result = await pool.query('select id,username,display_name,role,supervisor_id,must_change_password,password_hash from app_user where lower(username)=lower($1) and active=true', [username]);
+  const result = await pool.query("select id,username,display_name,role,supervisor_id,must_change_password,password_hash from app_user u where lower(username)=lower($1) and active=true and (role <> 'consultant' or exists (select 1 from app_user s where s.id=u.supervisor_id and s.active=true))", [username]);
   const row = result.rows[0];
   const matches = row ? await bcrypt.compare(password, row.password_hash) : (await bcrypt.hash(password, 12), false);
   if (!matches) {

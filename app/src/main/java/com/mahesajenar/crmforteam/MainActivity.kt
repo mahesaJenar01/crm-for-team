@@ -32,7 +32,7 @@ import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 
 enum class Role(val label: String) { MASTER("Master"), SUPERVISOR("Sales Supervisor"), CONSULTANT("Sales Consultant") }
-enum class Page(val label: String) { HOME("Beranda"), SPK("SPK"), OUTSTANDING("Outstanding"), PROSPECT("Prospek"), ACCOUNTS("Akun") }
+enum class Page(val label: String) { HOME("Beranda"), SPK("SPK"), OUTSTANDING("Outstanding"), PROSPECT("Prospek"), SALES("Sales"), ACCOUNTS("Akun") }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,8 +69,7 @@ private fun LoginScreen(api: ApiClient, passwordChanged: Boolean, onLogin: (User
                 Text("CRM for Team", fontSize = 28.sp, fontWeight = FontWeight.Bold)
                 Text("Masuk dengan akun tim Anda.")
                 Field(username, { username = it }, "Username")
-                OutlinedTextField(password, { password = it }, label = { Text("Password") }, singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                PasswordField(password, { password = it }, "Password")
                 if (passwordChanged) Text("Password berhasil diubah. Masuk lagi dengan password baru.", color = Color(0xFF006C4C))
                 ErrorText(error)
                 Button(onClick = {
@@ -102,8 +101,7 @@ private fun PasswordScreen(api: ApiClient, done: () -> Unit) {
                 listOf(Triple(old, "Password sementara", { v: String -> old = v }),
                     Triple(next, "Password baru", { v: String -> next = v }),
                     Triple(confirm, "Ulangi password baru", { v: String -> confirm = v })).forEach { (value, label, change) ->
-                    OutlinedTextField(value, change, label = { Text(label) }, visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth())
+                    PasswordField(value, change, label)
                 }
                 ErrorText(error)
                 Button({
@@ -137,6 +135,7 @@ private fun MainShell(api: ApiClient, user: User, loggedOut: () -> Unit) {
     var users by remember { mutableStateOf(listOf(user)) }
     val pages = buildList {
         add(Page.HOME); add(Page.SPK); add(Page.OUTSTANDING); add(Page.PROSPECT)
+        if (user.role == Role.SUPERVISOR) add(Page.SALES)
         if (user.role == Role.MASTER) add(Page.ACCOUNTS)
     }
     LaunchedEffect(user.id, reload) {
@@ -144,7 +143,9 @@ private fun MainShell(api: ApiClient, user: User, loggedOut: () -> Unit) {
             try { users = api.users() } catch (e: Exception) { error = friendly(e) }
         }
     }
-    val consultants = if (user.role == Role.CONSULTANT) listOf(user) else users.filter { it.role == Role.CONSULTANT && it.active }
+    val consultants = if (user.role == Role.CONSULTANT) listOf(user) else users.filter {
+        it.role == Role.CONSULTANT && it.active && users.any { supervisor -> supervisor.id == it.supervisorId && supervisor.active }
+    }
     Scaffold(topBar = {
         TopAppBar(title = { Column { Text("CRM for Team", fontWeight = FontWeight.Bold); Text("${user.displayName} · ${user.role.label}", fontSize = 12.sp) } },
             actions = {
@@ -156,6 +157,7 @@ private fun MainShell(api: ApiClient, user: User, loggedOut: () -> Unit) {
         NavigationBar { pages.forEach { item -> NavigationBarItem(page == item, { page = item },
             icon = { Icon(when (item) { Page.HOME -> Icons.Default.Home; Page.SPK -> Icons.Default.Description
                 Page.OUTSTANDING -> Icons.Default.Schedule; Page.PROSPECT -> Icons.Default.People
+                Page.SALES -> Icons.Default.Groups
                 Page.ACCOUNTS -> Icons.Default.ManageAccounts }, null) }, label = { Text(item.label, fontSize = 10.sp) }) } }
     }, floatingActionButton = {
         if (page == Page.SPK) FloatingActionButton({ showNewSpk = true }) { Icon(Icons.Default.Add, "Buat SPK") }
@@ -168,6 +170,7 @@ private fun MainShell(api: ApiClient, user: User, loggedOut: () -> Unit) {
                     Page.SPK -> SpkScreen(api, user, users, false, reload) { reload++ }
                     Page.OUTSTANDING -> SpkScreen(api, user, users, true, reload) { reload++ }
                     Page.PROSPECT -> ProspectScreen(api, consultants, reload) { reload++ }
+                    Page.SALES -> SalesScreen(users, user.id)
                     Page.ACCOUNTS -> AccountsScreen(api, users) { reload++ }
                 }
             }
@@ -439,7 +442,18 @@ private fun AddProspectDialog(consultant: User, dismiss: () -> Unit, save: (Stri
 @Composable
 private fun AccountsScreen(api: ApiClient, users: List<User>, changed: () -> Unit) {
     var showAdd by remember { mutableStateOf(false) }; var error by remember { mutableStateOf("") }
+    var selected by remember { mutableStateOf<String?>(null) }
+    var resetUser by remember { mutableStateOf<User?>(null) }
+    var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    fun act(account: User, action: String) {
+        busy = true; error = ""
+        scope.launch {
+            try { api.accountAction(account.id, action); changed() }
+            catch (e: Exception) { error = friendly(e) }
+            finally { busy = false }
+        }
+    }
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Kelola akun", fontSize = 24.sp, fontWeight = FontWeight.Bold)
@@ -447,16 +461,109 @@ private fun AccountsScreen(api: ApiClient, users: List<User>, changed: () -> Uni
         }
         ErrorText(error)
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(users, key = { it.id }) { account -> Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp)) {
-                Text(account.displayName, fontWeight = FontWeight.Bold)
-                Text("${account.username} · ${account.role.label}${if (!account.active) " · Nonaktif" else ""}")
-            } } }
+            items(users.filter { it.role != Role.CONSULTANT }, key = { it.id }) { account ->
+                Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.fillMaxWidth().clickable { selected = if (selected == account.id) null else account.id }) {
+                        Text(account.displayName, fontWeight = FontWeight.Bold)
+                        Text("${account.username} · ${account.role.label}")
+                        AccountStatus(account)
+                    }
+                    if (selected == account.id) {
+                        AccountActions(account, busy, account.id != api.currentUser?.id,
+                            { act(account, if (account.active) "disable" else "enable") }, { error = ""; resetUser = account })
+                        if (account.role == Role.SUPERVISOR) {
+                            HorizontalDivider()
+                            Text("Sales", fontWeight = FontWeight.Bold)
+                            val team = users.filter { it.role == Role.CONSULTANT && it.supervisorId == account.id }
+                            if (team.isEmpty()) Text("Belum ada sales consultant.")
+                            if (!account.active && team.isNotEmpty()) Text("Sales di bawah supervisor ini tidak dapat masuk sampai supervisor diaktifkan.", fontSize = 12.sp)
+                            team.forEach { consultant ->
+                                ConsultantAccountCard(consultant, busy,
+                                    { act(consultant, if (consultant.active) "disable" else "enable") },
+                                    { error = ""; resetUser = consultant })
+                            }
+                        }
+                    }
+                } }
+            }
         }
     }
     if (showAdd) AddAccountDialog(users, { showAdd = false }) { username, name, role, supervisorId, password ->
         scope.launch { try { api.createUser(username, name, role, supervisorId, password); showAdd = false; changed() }
             catch (e: Exception) { error = friendly(e) } }
     }
+    resetUser?.let { account -> ResetPasswordDialog(account, busy, error, { resetUser = null }) { password ->
+        busy = true; error = ""
+        scope.launch {
+            try { api.accountAction(account.id, "resetPassword", password); resetUser = null; changed() }
+            catch (e: Exception) { error = friendly(e) }
+            finally { busy = false }
+        }
+    } }
+}
+
+@Composable
+private fun AccountStatus(account: User) {
+    val status = when {
+        !account.active -> "Nonaktif"
+        account.mustChangePassword -> "Menunggu perubahan password"
+        else -> "Aktif"
+    }
+    Text(status, color = if (account.active) Color(0xFF006C4C) else MaterialTheme.colorScheme.error, fontSize = 12.sp)
+}
+
+@Composable
+private fun AccountActions(account: User, busy: Boolean, canToggle: Boolean, toggle: () -> Unit, reset: () -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(toggle, enabled = !busy && canToggle) { Text(if (account.active) "Nonaktifkan" else "Aktifkan") }
+        OutlinedButton(reset, enabled = !busy) { Text("Reset password") }
+    }
+}
+
+@Composable
+private fun ConsultantAccountCard(account: User, busy: Boolean, toggle: () -> Unit, reset: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.fillMaxWidth().clickable { open = !open }) {
+            Text(account.displayName, fontWeight = FontWeight.SemiBold)
+            Text(account.username, fontSize = 12.sp)
+            AccountStatus(account)
+            Text("SPK bulan ini: ${account.currentMonthSpks} · Prospek berjalan: ${account.runningProspects}")
+        }
+        if (open) AccountActions(account, busy, true, toggle, reset)
+    } }
+}
+
+@Composable
+private fun SalesScreen(users: List<User>, supervisorId: String) {
+    val team = users.filter { it.role == Role.CONSULTANT && it.supervisorId == supervisorId }
+    LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item { Text("Sales", fontSize = 24.sp, fontWeight = FontWeight.Bold) }
+        if (team.isEmpty()) item { Text("Belum ada sales consultant.") }
+        items(team, key = { it.id }) { account -> Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(account.displayName, fontWeight = FontWeight.Bold)
+                AccountStatus(account)
+                Text("SPK bulan ini: ${account.currentMonthSpks}")
+                Text("Prospek berjalan: ${account.runningProspects}")
+            }
+        } }
+    }
+}
+
+@Composable
+private fun ResetPasswordDialog(account: User, busy: Boolean, serverError: String, dismiss: () -> Unit, save: (String) -> Unit) {
+    var password by remember(account.id) { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
+    AlertDialog(onDismissRequest = dismiss, title = { Text("Reset password ${account.displayName}") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Buat password sementara. Berikan kepada pemilik akun agar ia dapat masuk dan membuat password baru.")
+            PasswordField(password, { password = it }, "Password sementara")
+            ErrorText(error)
+            ErrorText(serverError)
+        } },
+        confirmButton = { Button({ if (password.length < 12) error = "Minimal 12 karakter." else save(password) }, enabled = !busy) { Text("Reset") } },
+        dismissButton = { TextButton(dismiss) { Text("Batal") } })
 }
 
 @Composable
@@ -469,7 +576,7 @@ private fun AddAccountDialog(users: List<User>, dismiss: () -> Unit, save: (Stri
     AlertDialog(onDismissRequest = dismiss, title = { Text("Buat akun") }, text = {
         Column(Modifier.heightIn(max = 550.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Field(name, { name = it }, "Nama"); Field(username, { username = it }, "Username")
-            OutlinedTextField(password, { password = it }, label = { Text("Password sementara") }, visualTransformation = PasswordVisualTransformation())
+            PasswordField(password, { password = it }, "Password sementara")
             ChoiceRow("Peran", listOf(Role.SUPERVISOR.label, Role.CONSULTANT.label), role.label) { role = Role.entries.first { r -> r.label == it } }
             if (role == Role.CONSULTANT) DropdownField("Supervisor", supervisor?.displayName ?: "Belum ada", supervisors.map { it.displayName }) { n -> supervisor = supervisors.first { it.displayName == n } }
             Text("Pemilik akun akan diminta mengganti password saat masuk pertama kali.", fontSize = 12.sp)
@@ -486,6 +593,16 @@ private fun AddAccountDialog(users: List<User>, dismiss: () -> Unit, save: (Stri
 
 @Composable private fun Field(value: String, change: (String) -> Unit, label: String) =
     OutlinedTextField(value, change, label = { Text(label) }, modifier = Modifier.fillMaxWidth())
+
+@Composable private fun PasswordField(value: String, change: (String) -> Unit, label: String) {
+    var visible by remember { mutableStateOf(false) }
+    OutlinedTextField(value, change, label = { Text(label) }, singleLine = true,
+        visualTransformation = if (visible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+        trailingIcon = { IconButton({ visible = !visible }) {
+            Icon(if (visible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                if (visible) "Sembunyikan password" else "Lihat password")
+        } }, modifier = Modifier.fillMaxWidth())
+}
 
 @Composable private fun ChoiceRow(label: String, values: List<String>, selected: String, change: (String) -> Unit) {
     Column { Text(label, fontWeight = FontWeight.SemiBold); Row(Modifier.horizontalScroll(rememberScrollState())) {

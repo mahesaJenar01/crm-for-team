@@ -6,7 +6,8 @@ Android CRM for Mahesa Jenar's sales team. The application ID is
 ## What works now
 
 - Master, sales supervisor, and sales consultant experiences.
-- Master-only account creation.
+- Master-only account creation, account activation, and temporary-password reset.
+- Consultants grouped under their supervisor in account management, with a supervisor Sales view showing current-month SPKs and pending prospects.
 - SPK creation with credit details, delivery date ranges,
   automatic Open status, current-month filtering, lifetime outstanding view, and
   25-row pagination.
@@ -14,6 +15,7 @@ Android CRM for Mahesa Jenar's sales team. The application ID is
   cancellation, refund, and DMS/CSI incentives.
 - Live SPKs, prospects, and accounts through the Vercel API and Neon database.
 - Staff first-login password change and server-managed sessions.
+- Password visibility controls while typing on sign-in, account creation, and password-change screens.
 
 The app needs internet access. It does not store passwords or session tokens on the
 phone; users sign in again after closing the app. Changes are saved to the server.

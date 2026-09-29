@@ -7,18 +7,19 @@ Android CRM for Mahesa Jenar's sales team. The application ID is
 
 - Master, sales supervisor, and sales consultant experiences.
 - Master-only account creation, account activation, and temporary-password reset.
+- Master account deletion that retains SPK and prospect history; deleting a supervisor leaves their consultants without a supervisor and new SPKs in the open queue.
 - Consultants grouped under their supervisor in account management, with a supervisor Sales view showing current-month SPKs and pending prospects.
-- SPK creation with credit details, delivery date ranges,
+- Full-page SPK creation and editing with credit details, delivery date ranges,
   automatic Open status, current-month filtering, lifetime outstanding view, and
   25-row pagination.
-- Supervisor visibility and controls for team SPKs, VIN allocation, delivery,
+- Supervisor visibility and controls for team SPKs, Noka allocation, delivery,
   cancellation, refund, and DMS/CSI incentives.
 - Live SPKs, prospects, and accounts through the Vercel API and Neon database.
-- Staff first-login password change and server-managed sessions.
+- Staff first-login password change and persistent server-managed sessions until logout.
 - Password visibility controls while typing on sign-in, account creation, and password-change screens.
 
-The app needs internet access. It does not store passwords or session tokens on the
-phone; users sign in again after closing the app. Changes are saved to the server.
+The app needs internet access. It does not store passwords. An app-private refresh
+token keeps users signed in after closing the app until they log out. Changes are saved to the server.
 Document upload is not available yet, so do not use the app to collect identity
 documents. See [SERVER.md](SERVER.md) for server details and future work.
 

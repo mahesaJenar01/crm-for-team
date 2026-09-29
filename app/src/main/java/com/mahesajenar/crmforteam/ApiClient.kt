@@ -1,5 +1,9 @@
 package com.mahesajenar.crmforteam
 
+import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -16,14 +20,14 @@ data class User(
 
 data class Spk(
     val id: String, val number: String, val date: LocalDate, val customerName: String,
-    val consultantId: String, val supervisorId: String, val clientType: String,
+    val consultantId: String, val supervisorId: String?, val consultantName: String?, val supervisorName: String?, val clientType: String,
     val phone: String, val carType: String, val color: String, val quantity: Int,
     val dealPrice: String?, val sameAsOtr: Boolean, val payment: String,
     val description: String?, val bonus: String, val promiseFrom: LocalDate,
     val promiseTo: LocalDate, val tenorMonths: Int?, val tdp: String?, val insurance: String?,
     val status: String, val crmDone: Boolean, val vin: String?, val vinAllocated: LocalDate?,
     val delivered: Boolean, val deliveredDate: LocalDate?, val fullyPaid: Boolean,
-    val deliveryPlanned: Boolean, val refundCredit: Boolean, val incentiveDms: Boolean,
+    val deliveryPlanned: Boolean, val planDoDate: LocalDate?, val refundCredit: Boolean, val incentiveDms: Boolean,
     val incentiveCsi: Boolean, val revision: Int
 )
 
@@ -34,12 +38,13 @@ data class PageResult<T>(val items: List<T>, val total: Int)
 
 class ApiException(val status: Int, message: String) : Exception(message)
 
-/** Tokens stay in memory: closing the app requires a new login and leaves no token in device backups. */
-class ApiClient {
+/** Refresh tokens are kept in app-private storage and excluded from device backups. */
+class ApiClient(context: Context) {
     private val base = "https://crm-for-team-server.vercel.app"
+    private val session = context.getSharedPreferences("session", Context.MODE_PRIVATE)
     private var accessToken: String? = null
-    private var refreshToken: String? = null
-    var currentUser: User? = null
+    private var refreshToken: String? = session.getString("refreshToken", null)
+    var currentUser: User? by mutableStateOf<User?>(null)
         private set
 
     private suspend fun request(method: String, path: String, payload: JSONObject? = null,
@@ -82,7 +87,14 @@ class ApiClient {
     private fun acceptSession(json: JSONObject): User {
         accessToken = json.getString("accessToken")
         refreshToken = json.getString("refreshToken")
+        session.edit().putString("refreshToken", refreshToken).apply()
         return user(json.getJSONObject("user")).also { currentUser = it }
+    }
+
+    suspend fun restoreSession(): User? {
+        if (refreshToken == null) return null
+        refresh()
+        return currentUser
     }
 
     suspend fun login(username: String, password: String): User = acceptSession(
@@ -93,9 +105,9 @@ class ApiClient {
         val token = refreshToken ?: throw ApiException(401, "Silakan masuk kembali.")
         try {
             acceptSession(rawRequest("POST", "/api/auth/refresh", JSONObject().put("refreshToken", token), null))
-        } catch (e: Exception) {
-            clearSession()
-            throw ApiException(401, "Sesi berakhir. Silakan masuk kembali.")
+        } catch (e: ApiException) {
+            if (e.status == 401) clearSession()
+            throw e
         }
     }
 
@@ -105,7 +117,10 @@ class ApiClient {
         finally { clearSession() }
     }
 
-    fun clearSession() { accessToken = null; refreshToken = null; currentUser = null }
+    fun clearSession() {
+        accessToken = null; refreshToken = null; currentUser = null
+        session.edit().remove("refreshToken").apply()
+    }
 
     suspend fun changePassword(old: String, next: String) {
         request("POST", "/api/auth/password", JSONObject().put("currentPassword", old).put("newPassword", next))
@@ -118,6 +133,7 @@ class ApiClient {
         if (password != null) body.put("password", password)
         request("PATCH", "/api/users", body)
     }
+    suspend fun deleteUser(id: String) { request("DELETE", "/api/users?id=$id") }
     suspend fun createUser(username: String, name: String, role: Role, supervisorId: String?, password: String): User {
         val body = JSONObject().put("username", username.trim()).put("displayName", name.trim())
             .put("role", role.name.lowercase()).put("password", password)
@@ -158,7 +174,7 @@ class ApiClient {
         o.getString("name"), o.getString("want"), o.getString("stage"), o.getString("status"))
     private fun spk(o: JSONObject) = Spk(
         o.getString("id"), o.getString("number"), o.localDate("date")!!, o.getString("customerName"),
-        o.getString("consultantId"), o.getString("supervisorId"), o.getString("clientType"),
+        o.getString("consultantId"), o.nullableString("supervisorId"), o.nullableString("consultantName"), o.nullableString("supervisorName"), o.getString("clientType"),
         o.getString("phone"), o.getString("carType"), o.getString("color"), o.getInt("quantity"),
         o.nullableString("dealPrice"), o.getBoolean("sameAsOtr"), o.getString("payment"),
         o.nullableString("description"), o.getString("bonus"), o.localDate("promiseFrom")!!,
@@ -166,7 +182,7 @@ class ApiClient {
         o.nullableString("insurance"), o.getString("status"), o.getBoolean("crmDone"),
         o.nullableString("vin"), o.localDate("vinAllocated"), o.getBoolean("delivered"),
         o.localDate("deliveredDate"), o.getBoolean("fullyPaid"), o.getBoolean("deliveryPlanned"),
-        o.getBoolean("refundCredit"), o.getBoolean("incentiveDms"), o.getBoolean("incentiveCsi"), o.getInt("revision")
+        o.localDate("planDoDate"), o.getBoolean("refundCredit"), o.getBoolean("incentiveDms"), o.getBoolean("incentiveCsi"), o.getInt("revision")
     )
 }
 

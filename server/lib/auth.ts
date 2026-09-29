@@ -36,7 +36,7 @@ export async function requireActor(request: Request, allowPasswordChange = false
     if (!payload.sub) throw new Error('Missing subject');
     id = payload.sub;
   } catch { throw new ApiError(401, 'Invalid or expired token'); }
-  const { rows } = await pool.query("select id, username, display_name, role, supervisor_id, must_change_password from app_user u where id=$1 and active=true and (role <> 'consultant' or exists (select 1 from app_user s where s.id=u.supervisor_id and s.active=true))", [id]);
+  const { rows } = await pool.query("select id, username, display_name, role, supervisor_id, must_change_password from app_user u where id=$1 and active=true and deleted_at is null and (role <> 'consultant' or supervisor_id is null or exists (select 1 from app_user s where s.id=u.supervisor_id and s.active=true and s.deleted_at is null))", [id]);
   if (!rows.length) throw new ApiError(401, 'Account disabled or missing');
   const row = rows[0];
   const actor: Actor = { id: row.id, username: row.username, displayName: row.display_name, role: row.role, supervisorId: row.supervisor_id, mustChangePassword: row.must_change_password };
@@ -45,7 +45,7 @@ export async function requireActor(request: Request, allowPasswordChange = false
 }
 
 export async function saveRefresh(db: Db, actorId: string, token: string): Promise<void> {
-  await db.query("insert into refresh_session (user_id, token_hash, expires_at) values ($1,$2,now()+interval '30 days')", [actorId, hashToken(token)]);
+  await db.query("insert into refresh_session (user_id, token_hash, expires_at) values ($1,$2,'infinity'::timestamptz)", [actorId, hashToken(token)]);
 }
 
 export async function audit(db: Db, request: Request, actorId: string | null, entityType: string, entityId: string | null, action: string, before: unknown = null, after: unknown = null): Promise<void> {

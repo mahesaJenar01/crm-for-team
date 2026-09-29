@@ -4,20 +4,22 @@ import { ApiError, boolean, date, integer, oneOf, optionalString, string, uuid }
 
 export const spkSelect = `select id,spk_number as "number",spk_date as "date",customer_name as "customerName",
  consultant_id as "consultantId",supervisor_id as "supervisorId",client_type as "clientType",phone,
+ (select display_name from app_user where app_user.id=spk.consultant_id) as "consultantName",
+ (select display_name from app_user where app_user.id=spk.supervisor_id) as "supervisorName",
  car_type as "carType",color,quantity,deal_price as "dealPrice",same_as_otr as "sameAsOtr",payment,
  tenor_months as "tenorMonths",tdp,insurance,description,bonus,promise_from as "promiseFrom",promise_to as "promiseTo",
  status,crm_done as "crmDone",vin,vin_allocated as "vinAllocated",delivered,delivered_date as "deliveredDate",
- fully_paid as "fullyPaid",delivery_planned as "deliveryPlanned",refund_credit as "refundCredit",
+ fully_paid as "fullyPaid",delivery_planned as "deliveryPlanned",plan_do_date as "planDoDate",refund_credit as "refundCredit",
  incentive_dms as "incentiveDms",incentive_csi as "incentiveCsi",revision,created_at as "createdAt",updated_at as "updatedAt" from spk`;
 
-export function canSeeSpk(actor: Actor, spk: { consultantId: string; supervisorId: string }): boolean {
+export function canSeeSpk(actor: Actor, spk: { consultantId: string; supervisorId: string | null }): boolean {
   return actor.role === 'master' || (actor.role === 'supervisor' && spk.supervisorId === actor.id) || (actor.role === 'consultant' && spk.consultantId === actor.id);
 }
 
-export async function consultantForSpk(db: Db, actor: Actor, requested: unknown): Promise<{ consultantId: string; supervisorId: string }> {
+export async function consultantForSpk(db: Db, actor: Actor, requested: unknown): Promise<{ consultantId: string; supervisorId: string | null }> {
   const consultantId = actor.role === 'consultant' ? actor.id : uuid(requested, 'consultantId');
-  const { rows } = await db.query("select c.id,c.supervisor_id from app_user c join app_user s on s.id=c.supervisor_id where c.id=$1 and c.role='consultant' and c.active=true and s.active=true", [consultantId]);
-  if (!rows.length || !rows[0].supervisor_id) throw new ApiError(400, 'Active consultant with supervisor required');
+  const { rows } = await db.query("select c.id,c.supervisor_id,s.active as supervisor_active,s.deleted_at as supervisor_deleted from app_user c left join app_user s on s.id=c.supervisor_id where c.id=$1 and c.role='consultant' and c.active=true and c.deleted_at is null", [consultantId]);
+  if (!rows.length || (rows[0].supervisor_id && (!rows[0].supervisor_active || rows[0].supervisor_deleted))) throw new ApiError(400, 'Active consultant required');
   if (actor.role === 'supervisor' && rows[0].supervisor_id !== actor.id) throw new ApiError(403, 'Consultant is outside your team');
   return { consultantId, supervisorId: rows[0].supervisor_id };
 }
@@ -35,18 +37,23 @@ export function validateSpkChanges(input: Record<string, unknown>, role: Actor['
     payment: 'payment', tenorMonths: 'tenor_months', tdp: 'tdp', insurance: 'insurance', description: 'description',
     bonus: 'bonus', promiseFrom: 'promise_from', promiseTo: 'promise_to', status: 'status', crmDone: 'crm_done',
     vin: 'vin', vinAllocated: 'vin_allocated', delivered: 'delivered', deliveredDate: 'delivered_date',
-    fullyPaid: 'fully_paid', deliveryPlanned: 'delivery_planned', refundCredit: 'refund_credit',
+    fullyPaid: 'fully_paid', deliveryPlanned: 'delivery_planned', planDoDate: 'plan_do_date', refundCredit: 'refund_credit',
     incentiveDms: 'incentive_dms', incentiveCsi: 'incentive_csi',
   };
-  const protectedFields = new Set(['status', 'vin', 'vinAllocated', 'delivered', 'deliveredDate', 'fullyPaid', 'deliveryPlanned', 'refundCredit', 'incentiveDms', 'incentiveCsi']);
+  const protectedFields = new Set(['status', 'vin', 'vinAllocated', 'delivered', 'deliveredDate', 'fullyPaid', 'deliveryPlanned', 'planDoDate', 'refundCredit', 'incentiveDms', 'incentiveCsi']);
   const output: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(input)) {
     if (!(key in columns)) throw new ApiError(400, `Unknown SPK field: ${key}`);
     if (role === 'consultant' && protectedFields.has(key)) throw new ApiError(403, `Cannot edit ${key}`);
     const column = columns[key];
-    if (['number', 'customerName', 'phone', 'carType', 'color', 'bonus'].includes(key)) output[column] = string(value, key, 300);
+    if (key === 'number') {
+      const number = string(value, key, 11);
+      if (!/^LOT - \d{5}$/.test(number)) throw new ApiError(400, 'SPK number must be LOT - followed by 5 digits');
+      output[column] = number;
+    }
+    else if (['customerName', 'phone', 'carType', 'color', 'bonus'].includes(key)) output[column] = string(value, key, 300);
     else if (['date', 'promiseFrom', 'promiseTo'].includes(key)) output[column] = date(value, key);
-    else if (key === 'deliveredDate' || key === 'vinAllocated') output[column] = value === null ? null : date(value, key);
+    else if (key === 'deliveredDate' || key === 'vinAllocated' || key === 'planDoDate') output[column] = value === null ? null : date(value, key);
     else if (key === 'clientType') output[column] = oneOf(value, key, ['retail', 'fleet'] as const);
     else if (key === 'payment') output[column] = oneOf(value, key, ['cash', 'credit', 'cop'] as const);
     else if (key === 'status') output[column] = oneOf(value, key, ['open', 'closed', 'cancelled'] as const);

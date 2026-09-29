@@ -13,9 +13,9 @@ create table app_user (
   role user_role not null,
   supervisor_id uuid references app_user(id),
   active boolean not null default true,
+  deleted_at timestamptz,
   must_change_password boolean not null default true,
-  created_at timestamptz not null default now(),
-  check ((role = 'consultant' and supervisor_id is not null) or role <> 'consultant')
+  created_at timestamptz not null default now()
 );
 
 create table spk (
@@ -24,7 +24,7 @@ create table spk (
   spk_date date not null,
   customer_name text not null,
   consultant_id uuid not null references app_user(id),
-  supervisor_id uuid not null references app_user(id),
+  supervisor_id uuid references app_user(id),
   client_type text not null check (client_type in ('retail', 'fleet')),
   phone text not null,
   car_type text not null,
@@ -48,6 +48,7 @@ create table spk (
   delivered_date date,
   fully_paid boolean not null default false,
   delivery_planned boolean not null default false,
+  plan_do_date date,
   refund_credit boolean not null default false,
   incentive_dms boolean not null default false,
   incentive_csi boolean not null default false,

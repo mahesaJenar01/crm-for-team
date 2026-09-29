@@ -23,6 +23,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -30,6 +32,8 @@ import org.json.JSONObject
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
+import java.text.NumberFormat
+import java.util.Locale
 
 enum class Role(val label: String) { MASTER("Master"), SUPERVISOR("Sales Supervisor"), CONSULTANT("Sales Consultant") }
 enum class Page(val label: String) { HOME("Beranda"), SPK("SPK"), OUTSTANDING("Outstanding"), PROSPECT("Prospek"), SALES("Sales"), ACCOUNTS("Akun") }
@@ -45,10 +49,29 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun LiveApp() {
-    val api = remember { ApiClient() }
+    val context = LocalContext.current
+    val api = remember { ApiClient(context.applicationContext) }
     var user by remember { mutableStateOf<User?>(null) }
     var changedPassword by remember { mutableStateOf(false) }
+    var restoring by remember { mutableStateOf(true) }
+    var restoreError by remember { mutableStateOf("") }
+    var restoreAttempt by remember { mutableIntStateOf(0) }
+    LaunchedEffect(restoreAttempt) {
+        restoring = true
+        try { user = api.restoreSession(); restoreError = "" }
+        catch (e: Exception) {
+            if (e is ApiException && e.status == 401) { user = null; restoreError = "" }
+            else restoreError = friendly(e)
+        } finally { restoring = false }
+    }
     when {
+        restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        restoreError.isNotBlank() -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                ErrorText(restoreError)
+                Button({ restoreAttempt++ }) { Text("Coba lagi") }
+            }
+        }
         user == null -> LoginScreen(api, changedPassword) { user = it; changedPassword = false }
         user!!.mustChangePassword -> PasswordScreen(api) { user = null; changedPassword = true }
         else -> MainShell(api, user!!) { user = null }
@@ -130,9 +153,11 @@ private fun MainShell(api: ApiClient, user: User, loggedOut: () -> Unit) {
     var page by remember { mutableStateOf(Page.HOME) }
     var reload by remember { mutableIntStateOf(0) }
     var showNewSpk by remember { mutableStateOf(false) }
+    var editingSpk by remember { mutableStateOf<Spk?>(null) }
     var savingSpk by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var users by remember { mutableStateOf(listOf(user)) }
+    LaunchedEffect(api.currentUser) { if (api.currentUser == null) loggedOut() }
     val pages = buildList {
         add(Page.HOME); add(Page.SPK); add(Page.OUTSTANDING); add(Page.PROSPECT)
         if (user.role == Role.SUPERVISOR) add(Page.SALES)
@@ -144,8 +169,9 @@ private fun MainShell(api: ApiClient, user: User, loggedOut: () -> Unit) {
         }
     }
     val consultants = if (user.role == Role.CONSULTANT) listOf(user) else users.filter {
-        it.role == Role.CONSULTANT && it.active && users.any { supervisor -> supervisor.id == it.supervisorId && supervisor.active }
+        it.role == Role.CONSULTANT && it.active && (it.supervisorId == null || users.any { supervisor -> supervisor.id == it.supervisorId && supervisor.active })
     }
+    val inSpkForm = showNewSpk || editingSpk != null
     Scaffold(topBar = {
         TopAppBar(title = { Column { Text("CRM for Team", fontWeight = FontWeight.Bold); Text("${user.displayName} · ${user.role.label}", fontSize = 12.sp) } },
             actions = {
@@ -154,34 +180,37 @@ private fun MainShell(api: ApiClient, user: User, loggedOut: () -> Unit) {
                     Icon(Icons.Default.Logout, "Keluar") }
             })
     }, bottomBar = {
-        NavigationBar { pages.forEach { item -> NavigationBarItem(page == item, { page = item },
+        if (!inSpkForm) NavigationBar { pages.forEach { item -> NavigationBarItem(page == item, { page = item },
             icon = { Icon(when (item) { Page.HOME -> Icons.Default.Home; Page.SPK -> Icons.Default.Description
                 Page.OUTSTANDING -> Icons.Default.Schedule; Page.PROSPECT -> Icons.Default.People
                 Page.SALES -> Icons.Default.Groups
                 Page.ACCOUNTS -> Icons.Default.ManageAccounts }, null) }, label = { Text(item.label, fontSize = 10.sp) }) } }
     }, floatingActionButton = {
-        if (page == Page.SPK) FloatingActionButton({ showNewSpk = true }) { Icon(Icons.Default.Add, "Buat SPK") }
+        if (page == Page.SPK && !inSpkForm) FloatingActionButton({ showNewSpk = true }) { Icon(Icons.Default.Add, "Buat SPK") }
     }) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             if (error.isNotBlank()) ErrorBanner(error) { error = "" }
             Box(Modifier.weight(1f)) {
-                when (page) {
+                if (inSpkForm) SpkFormScreen(user, consultants, editingSpk, savingSpk, error,
+                    { showNewSpk = false; editingSpk = null; error = "" }) { payload ->
+                    savingSpk = true; error = ""
+                    scope.launch {
+                        try {
+                            if (editingSpk == null) api.createSpk(payload)
+                            else api.updateSpk(editingSpk!!, payload)
+                            showNewSpk = false; editingSpk = null; reload++
+                        } catch (e: Exception) { error = friendly(e); if (e is ApiException && e.status == 409) reload++ }
+                        finally { savingSpk = false }
+                    }
+                } else when (page) {
                     Page.HOME -> HomeScreen(api, user, reload) { page = Page.PROSPECT }
-                    Page.SPK -> SpkScreen(api, user, users, false, reload) { reload++ }
-                    Page.OUTSTANDING -> SpkScreen(api, user, users, true, reload) { reload++ }
+                    Page.SPK -> SpkScreen(api, user, users, false, reload, { editingSpk = it }) { reload++ }
+                    Page.OUTSTANDING -> SpkScreen(api, user, users, true, reload, { editingSpk = it }) { reload++ }
                     Page.PROSPECT -> ProspectScreen(api, consultants, reload) { reload++ }
                     Page.SALES -> SalesScreen(users, user.id)
                     Page.ACCOUNTS -> AccountsScreen(api, users) { reload++ }
                 }
             }
-        }
-    }
-    if (showNewSpk) NewSpkDialog(user, consultants, savingSpk, { showNewSpk = false }) { payload ->
-        savingSpk = true
-        scope.launch {
-            try { api.createSpk(payload); showNewSpk = false; reload++ }
-            catch (e: Exception) { error = friendly(e) }
-            finally { savingSpk = false }
         }
     }
 }
@@ -229,7 +258,7 @@ private suspend fun allProspects(api: ApiClient): List<Prospect> {
 }
 
 @Composable
-private fun SpkScreen(api: ApiClient, user: User, users: List<User>, outstanding: Boolean, reload: Int, changed: () -> Unit) {
+private fun SpkScreen(api: ApiClient, user: User, users: List<User>, outstanding: Boolean, reload: Int, edit: (Spk) -> Unit, changed: () -> Unit) {
     var month by remember { mutableStateOf(YearMonth.now()) }; var page by remember { mutableIntStateOf(1) }
     var result by remember { mutableStateOf(PageResult(emptyList<Spk>(), 0)) }
     var loading by remember { mutableStateOf(true) }; var error by remember { mutableStateOf("") }
@@ -242,7 +271,7 @@ private fun SpkScreen(api: ApiClient, user: User, users: List<User>, outstanding
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(if (outstanding) "Outstanding" else "SPK ${month.format(DateTimeFormatter.ofPattern("MMMM yyyy"))}", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(if (outstanding) "Outstanding" else "SPK ${month.format(DateTimeFormatter.ofPattern("MMMM yyyy", indonesian))}", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Text("${result.total} SPK", fontSize = 12.sp)
             }
             if (!outstanding) {
@@ -254,7 +283,7 @@ private fun SpkScreen(api: ApiClient, user: User, users: List<User>, outstanding
         if (error.isNotBlank()) ErrorBanner(error) { page = 1; changed() }
         if (!loading && error.isBlank() && result.items.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("Belum ada SPK.") }
         LazyColumn(Modifier.weight(1f).padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(result.items, key = { it.id }) { item -> SpkCard(api, item, user, users, changed) }
+            items(result.items, key = { it.id }) { item -> SpkCard(api, item, user, edit, changed) }
         }
         if (result.total > 25) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             TextButton({ page-- }, enabled = page > 1) { Text("Sebelumnya") }
@@ -265,7 +294,7 @@ private fun SpkScreen(api: ApiClient, user: User, users: List<User>, outstanding
 }
 
 @Composable
-private fun SpkCard(api: ApiClient, spk: Spk, user: User, users: List<User>, changed: () -> Unit) {
+private fun SpkCard(api: ApiClient, spk: Spk, user: User, edit: (Spk) -> Unit, changed: () -> Unit) {
     val scope = rememberCoroutineScope(); val clipboard = LocalClipboardManager.current
     var expanded by remember { mutableStateOf(false) }; var error by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }; var confirmDelete by remember { mutableStateOf(false) }
@@ -282,26 +311,35 @@ private fun SpkCard(api: ApiClient, spk: Spk, user: User, users: List<User>, cha
         Column(Modifier.clickable { expanded = !expanded }.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(spk.number, fontWeight = FontWeight.Bold); Text(spk.status.uppercase()) }
             Text(spk.customerName, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-            Text("${spk.date} · ${spk.carType} · ${spk.color}")
-            Row(verticalAlignment = Alignment.CenterVertically) { Text("CRM selesai", Modifier.weight(1f)); Switch(spk.crmDone, { save(JSONObject().put("crmDone", it)) }, enabled = !busy) }
+            Text("${dateLabel(spk.date)} · ${spk.carType} · ${spk.color}")
             ErrorText(error)
             if (expanded) {
                 HorizontalDivider()
-                Text("Sales: ${users.firstOrNull { it.id == spk.consultantId }?.displayName ?: if (spk.consultantId == user.id) user.displayName else spk.consultantId}")
-                Row(verticalAlignment = Alignment.CenterVertically) { Text("VIN: ${spk.vin ?: "Belum dialokasikan"}", Modifier.weight(1f)); if (!spk.vin.isNullOrBlank()) IconButton({ clipboard.setText(AnnotatedString(spk.vin)) }) { Icon(Icons.Default.ContentCopy, "Salin VIN") } }
-                Text("Janji kirim: ${spk.promiseFrom} s.d. ${spk.promiseTo}")
-                Text("Pembayaran: ${spk.payment.uppercase()} · ${spk.dealPrice ?: "Sama dengan OTR"}")
-                Text("Lunas: ${yesNo(spk.fullyPaid)} · Pengiriman direncanakan: ${yesNo(spk.deliveryPlanned)}")
-                Text("Dikirim: ${yesNo(spk.delivered)} · CRM: ${yesNo(spk.crmDone)}")
+                Text("Sales: ${spk.consultantName ?: if (spk.consultantId == user.id) user.displayName else "Tidak diketahui"} · SPV: ${spk.supervisorName ?: "Tanpa supervisor"}")
+                Row(verticalAlignment = Alignment.CenterVertically) { Text("Noka: ${spk.vin ?: "Belum dialokasikan"}", Modifier.weight(1f)); if (!spk.vin.isNullOrBlank()) IconButton({ clipboard.setText(AnnotatedString(spk.vin)) }) { Icon(Icons.Default.ContentCopy, "Salin Noka") } }
                 if (user.role != Role.CONSULTANT) {
-                    OutlinedTextField(vin, { vin = it }, label = { Text("VIN") }, modifier = Modifier.fillMaxWidth())
-                    Button({ save(JSONObject().put("vin", vin.trim().ifBlank { JSONObject.NULL }).put("vinAllocated", if (vin.isBlank()) JSONObject.NULL else LocalDate.now().toString())) }, enabled = !busy) { Text("Simpan VIN") }
-                    FlagControl("Sudah lunas", spk.fullyPaid, busy) { save(JSONObject().put("fullyPaid", it)) }
-                    FlagControl("Pengiriman direncanakan", spk.deliveryPlanned, busy) { save(JSONObject().put("deliveryPlanned", it)) }
-                    FlagControl("Sudah dikirim", spk.delivered, busy) { save(JSONObject().put("delivered", it).put("status", if (it) "closed" else "open").put("deliveredDate", if (it) LocalDate.now().toString() else JSONObject.NULL)) }
-                    FlagControl("Refund kredit cair", spk.refundCredit, busy) { save(JSONObject().put("refundCredit", it)) }
-                    FlagControl("Insentif DMS cair", spk.incentiveDms, busy) { save(JSONObject().put("incentiveDms", it)) }
-                    FlagControl("Insentif CSI cair", spk.incentiveCsi, busy) { save(JSONObject().put("incentiveCsi", it)) }
+                    OutlinedTextField(vin, { vin = it }, label = { Text("Noka") }, modifier = Modifier.fillMaxWidth())
+                    Button({ save(JSONObject().put("vin", vin.trim().ifBlank { JSONObject.NULL }).put("vinAllocated", if (vin.isBlank()) JSONObject.NULL else LocalDate.now().toString())) }, enabled = !busy) { Text("Simpan Noka") }
+                }
+                Text("Promise Delivery: ${dateRangeLabel(spk.promiseFrom, spk.promiseTo)}")
+                Text("Metode Pembayaran: ${spk.payment.uppercase()} - ${if (spk.sameAsOtr) "deal sesuai OTR" else "deal dengan harga ${moneyLabel(spk.dealPrice)}"}")
+                if (user.role != Role.CONSULTANT) FlagControl("Lunas: ${yesNo(spk.fullyPaid)}", spk.fullyPaid, busy) { save(JSONObject().put("fullyPaid", it)) }
+                else Text("Lunas: ${yesNo(spk.fullyPaid)}")
+                if (user.role != Role.CONSULTANT) {
+                    FlagControl(planDoLabel(spk), spk.deliveryPlanned, busy) {
+                        save(JSONObject().put("deliveryPlanned", it).put("planDoDate", if (it) LocalDate.now().toString() else JSONObject.NULL))
+                    }
+                    if (spk.deliveryPlanned) DateButton("Tanggal Plan DO", spk.planDoDate ?: LocalDate.now()) { save(JSONObject().put("planDoDate", it.toString())) }
+                    FlagControl("Dikirim: ${yesNo(spk.delivered)}", spk.delivered, busy) { save(JSONObject().put("delivered", it).put("status", if (it) "closed" else "open").put("deliveredDate", if (it) LocalDate.now().toString() else JSONObject.NULL)) }
+                } else {
+                    Text(planDoLabel(spk))
+                    Text("Dikirim: ${yesNo(spk.delivered)}")
+                }
+                FlagControl("CRM: ${yesNo(spk.crmDone)}", spk.crmDone, busy) { save(JSONObject().put("crmDone", it)) }
+                if (user.role != Role.CONSULTANT) FlagControl("DMS: ${yesNo(spk.incentiveDms)}", spk.incentiveDms, busy) { save(JSONObject().put("incentiveDms", it)) }
+                else Text("DMS: ${yesNo(spk.incentiveDms)}")
+                TextButton({ edit(spk) }, enabled = !busy) { Text("Edit SPK") }
+                if (user.role != Role.CONSULTANT) {
                     TextButton({ save(JSONObject().put("status", "cancelled")) }, enabled = !busy && !spk.delivered) { Text("Batalkan SPK") }
                     TextButton({ confirmDelete = true }, enabled = !busy) { Text("Hapus SPK", color = MaterialTheme.colorScheme.error) }
                 }
@@ -320,68 +358,124 @@ private fun SpkCard(api: ApiClient, spk: Spk, user: User, users: List<User>, cha
     Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(value, change, enabled = !busy); Text(label) }
 private fun yesNo(value: Boolean) = if (value) "Ya" else "Belum"
 
+private val indonesian = Locale("id", "ID")
+private fun dateLabel(date: LocalDate): String = date.format(DateTimeFormatter.ofPattern("d MMMM yyyy", indonesian))
+private fun dateRangeLabel(from: LocalDate, to: LocalDate): String =
+    if (from.year == to.year) "${from.format(DateTimeFormatter.ofPattern("d MMMM", indonesian))} - ${dateLabel(to)}"
+    else "${dateLabel(from)} - ${dateLabel(to)}"
+private fun planDoLabel(spk: Spk): String = if (spk.deliveryPlanned)
+    "Plan DO: Ya - ${spk.planDoDate?.let(::dateLabel) ?: "Tanggal belum diisi"}"
+    else "Plan DO: Belum"
+private fun moneyLabel(value: String?): String = value?.toBigDecimalOrNull()?.let {
+    NumberFormat.getNumberInstance(indonesian).apply { maximumFractionDigits = 2 }.format(it)
+} ?: "Belum diisi"
+private fun groupedDigits(value: String): String = value.reversed().chunked(3).joinToString(".").reversed()
+private fun wholeMoneyDigits(value: String?): String = value?.toBigDecimalOrNull()?.let {
+    runCatching { it.toBigIntegerExact().toString() }.getOrNull()
+}.orEmpty()
+
+private val carColors = linkedMapOf(
+    "JAECOO J5 PREMIUM" to listOf("PRISTINE WHITE", "JET BLACK", "FOREST GREEN", "IVORY GRAY"),
+    "JAECOO J5 STANDAR" to listOf("PRISTINE WHITE", "JET BLACK"),
+    "JAECOO J7 SHS" to listOf("PRISTINE WHITE", "JET BLACK", "MOONLIGHT SILVER", "STONE GREY", "PRISTINE WHITE TWO TONE"),
+    "JAECOO J7 AWD" to listOf("PRISTINE WHITE", "JET BLACK", "MOONLIGHT SILVER", "STONE GREY", "PRISTINE WHITE TWO TONE"),
+    "JAECOO J8 SHS ARDIS" to listOf("PRISTINE WHITE TWO TONE", "JET BLACK", "LUNAR SILVER TWO TONE", "STONE GREY TWO TONE"),
+    "JAECOO J8 ARDIS" to listOf("PRISTINE WHITE TWO TONE", "JET BLACK", "LUNAR SILVER TWO TONE", "STONE GREY TWO TONE")
+)
+
 @Composable
-private fun NewSpkDialog(user: User, consultants: List<User>, saving: Boolean, dismiss: () -> Unit, save: (JSONObject) -> Unit) {
-    var consultant by remember(consultants) { mutableStateOf(consultants.firstOrNull()) }
-    var number by remember { mutableStateOf("") }; var customer by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }; var car by remember { mutableStateOf("") }
-    var color by remember { mutableStateOf("") }; var qty by remember { mutableStateOf("1") }
-    var price by remember { mutableStateOf("") }; var sameOtr by remember { mutableStateOf(false) }
-    var clientType by remember { mutableStateOf("retail") }; var payment by remember { mutableStateOf("cash") }
-    var bonus by remember { mutableStateOf("") }; var description by remember { mutableStateOf("") }
-    var tenor by remember { mutableStateOf("") }; var tdp by remember { mutableStateOf("") }
-    var insurance by remember { mutableStateOf("Combine") }
-    var date by remember { mutableStateOf(LocalDate.now()) }; var from by remember { mutableStateOf(LocalDate.now()) }
-    var to by remember { mutableStateOf(LocalDate.now()) }; var error by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = dismiss, title = { Text("Buat SPK") }, confirmButton = {}, text = {
-        Column(Modifier.fillMaxWidth().heightIn(max = 640.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (user.role != Role.CONSULTANT) DropdownField("Sales", consultant?.displayName ?: "Pilih", consultants.map { it.displayName }) { name -> consultant = consultants.first { it.displayName == name } }
-            else Text("Sales: ${user.displayName}")
-            Field(number, { number = it }, "Nomor SPK *"); Field(customer, { customer = it }, "Nama pelanggan *")
-            Field(phone, { phone = it }, "Nomor telepon *")
-            ChoiceRow("Jenis klien", listOf("retail", "fleet"), clientType) { clientType = it }
-            Text("Dokumen belum dapat diunggah. Simpan dokumen identitas di tempat aman sesuai aturan tim.", color = Color.Gray)
-            Field(car, { car = it }, "Tipe mobil *"); Field(color, { color = it }, "Warna *")
-            Field(qty, { qty = it.filter(Char::isDigit) }, "Jumlah *")
-            FlagControl("Harga sama dengan OTR", sameOtr, false) { sameOtr = it }
-            if (!sameOtr) Field(price, { price = it }, "Harga deal (angka) *")
-            ChoiceRow("Pembayaran", listOf("cash", "credit", "cop"), payment) { payment = it }
-            if (payment == "credit") {
-                Field(tenor, { tenor = it.filter(Char::isDigit) }, "Tenor (bulan) *")
-                Field(tdp, { tdp = it }, "TDP (angka) *")
-                DropdownField("Asuransi", insurance, listOf("Combine", "All risk full tenor", "All risk perluasan full tenor")) { insurance = it }
-            }
-            Field(bonus, { bonus = it }, "Bonus *"); Field(description, { description = it }, "Deskripsi")
-            DateButton("Tanggal SPK", date) { date = it }
-            DateButton("Janji kirim mulai", from) { from = it; if (to < it) to = it }
-            DateButton("Janji kirim sampai", to) { to = it }
-            ErrorText(error)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(dismiss) { Text("Batal") }
-                Button({
-                    when {
-                        consultant == null -> error = "Pilih sales."
-                        listOf(number, customer, phone, car, color, bonus).any { it.isBlank() } -> error = "Lengkapi kolom bertanda *."
-                        qty.toIntOrNull()?.let { it > 0 } != true -> error = "Jumlah harus lebih dari nol."
-                        to < from -> error = "Tanggal akhir janji kirim terlalu awal."
-                        !sameOtr && !price.matches(Regex("\\d{1,16}(\\.\\d{1,2})?")) -> error = "Harga deal harus angka tanpa Rp atau titik ribuan."
-                        payment == "credit" && (tenor.toIntOrNull()?.let { it in 1..600 } != true || !tdp.matches(Regex("\\d{1,16}(\\.\\d{1,2})?"))) -> error = "Isi tenor dalam bulan dan TDP berupa angka."
-                        else -> {
-                            val body = JSONObject().put("number", number.trim()).put("date", date.toString())
-                                .put("customerName", customer.trim()).put("consultantId", consultant!!.id)
-                                .put("clientType", clientType).put("phone", phone.trim()).put("carType", car.trim())
-                                .put("color", color.trim()).put("quantity", qty.toInt()).put("sameAsOtr", sameOtr)
-                                .put("dealPrice", if (sameOtr) JSONObject.NULL else price).put("payment", payment)
-                                .put("bonus", bonus.trim()).put("description", description.trim())
-                                .put("promiseFrom", from.toString()).put("promiseTo", to.toString())
-                            if (payment == "credit") body.put("tenorMonths", tenor.toInt()).put("tdp", tdp).put("insurance", insurance)
-                            save(body)
-                        }
-                    }
-                }, enabled = !saving) { Text(if (saving) "Menyimpan…" else "Simpan") }
-            }
+private fun SpkFormScreen(user: User, consultants: List<User>, edit: Spk?, saving: Boolean, serverError: String,
+                          dismiss: () -> Unit, save: (JSONObject) -> Unit) {
+    var consultant by remember(edit?.id, consultants) { mutableStateOf(consultants.firstOrNull { it.id == edit?.consultantId } ?: consultants.firstOrNull()) }
+    var number by remember(edit?.id) { mutableStateOf(edit?.number?.removePrefix("LOT - ")?.takeIf { it.matches(Regex("\\d{5}")) }.orEmpty()) }
+    var customer by remember(edit?.id) { mutableStateOf(edit?.customerName.orEmpty()) }
+    var phone by remember(edit?.id) { mutableStateOf(edit?.phone.orEmpty()) }
+    var car by remember(edit?.id) { mutableStateOf(edit?.carType?.takeIf { it in carColors } ?: carColors.keys.first()) }
+    var color by remember(edit?.id) { mutableStateOf(edit?.color?.takeIf { it in carColors[car].orEmpty() } ?: carColors[car]!!.first()) }
+    var qty by remember(edit?.id) { mutableStateOf(edit?.quantity?.toString() ?: "1") }
+    var price by remember(edit?.id) { mutableStateOf(wholeMoneyDigits(edit?.dealPrice)) }
+    var sameOtr by remember(edit?.id) { mutableStateOf(edit?.sameAsOtr ?: false) }
+    var clientType by remember(edit?.id) { mutableStateOf(edit?.clientType ?: "retail") }
+    var payment by remember(edit?.id) { mutableStateOf(edit?.payment ?: "cash") }
+    var standardBonus by remember(edit?.id) { mutableStateOf(edit == null || edit.bonus == "Bonus standar") }
+    var bonus by remember(edit?.id) { mutableStateOf(if (edit == null || edit.bonus == "Bonus standar") "" else edit.bonus) }
+    var description by remember(edit?.id) { mutableStateOf(edit?.description.orEmpty()) }
+    var tenor by remember(edit?.id) { mutableStateOf(edit?.tenorMonths?.toString().orEmpty()) }
+    var tdp by remember(edit?.id) { mutableStateOf(wholeMoneyDigits(edit?.tdp)) }
+    var insurance by remember(edit?.id) { mutableStateOf(edit?.insurance ?: "Combine") }
+    var date by remember(edit?.id) { mutableStateOf(edit?.date ?: LocalDate.now()) }
+    var from by remember(edit?.id) { mutableStateOf(edit?.promiseFrom ?: LocalDate.now()) }
+    var to by remember(edit?.id) { mutableStateOf(edit?.promiseTo ?: LocalDate.now()) }
+    var refund by remember(edit?.id) { mutableStateOf(edit?.refundCredit ?: false) }
+    var csi by remember(edit?.id) { mutableStateOf(edit?.incentiveCsi ?: false) }
+    var error by remember { mutableStateOf("") }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        TextButton(dismiss) { Text("← Kembali") }
+        Text(if (edit == null) "Buat SPK" else "Edit SPK", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        if (edit == null && user.role != Role.CONSULTANT)
+            DropdownField("Sales", consultant?.displayName ?: "Pilih", consultants.map { it.displayName }) { name -> consultant = consultants.first { it.displayName == name } }
+        else Text("Sales: ${edit?.consultantName ?: user.displayName}")
+        OutlinedTextField(number, { number = it.filter(Char::isDigit).take(5) }, label = { Text("Nomor SPK (5 angka) *") },
+            supportingText = { Text("LOT - ${number.padEnd(5, '_')}") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+        Field(customer, { customer = it }, "Nama pelanggan *")
+        OutlinedTextField(phone, { phone = it.filter(Char::isDigit) }, label = { Text("Nomor telepon *") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), modifier = Modifier.fillMaxWidth())
+        ChoiceRow("Jenis klien", listOf("retail", "fleet"), clientType) { clientType = it }
+        Text("Dokumen belum dapat diunggah. Simpan dokumen identitas di tempat aman sesuai aturan tim.", color = Color.Gray)
+        DropdownField("Tipe mobil", car, carColors.keys.toList()) { selected -> car = selected; color = carColors[selected]!!.first() }
+        DropdownField("Warna", color, carColors[car].orEmpty()) { color = it }
+        OutlinedTextField(qty, { qty = it.filter(Char::isDigit) }, label = { Text("Jumlah *") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+        FlagControl("Harga sama dengan OTR", sameOtr, false) { sameOtr = it }
+        if (!sameOtr) OutlinedTextField(groupedDigits(price), { price = it.filter(Char::isDigit).take(16) },
+            label = { Text("Harga deal *") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+        ChoiceRow("Metode Pembayaran", listOf("cash", "credit", "cop"), payment) { payment = it }
+        if (payment == "credit") {
+            OutlinedTextField(tenor, { tenor = it.filter(Char::isDigit) }, label = { Text("Tenor (bulan) *") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(groupedDigits(tdp), { tdp = it.filter(Char::isDigit).take(16) }, label = { Text("TDP *") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+            DropdownField("Asuransi", insurance, listOf("Combine", "All risk full tenor", "All risk perluasan full tenor")) { insurance = it }
         }
-    })
+        FlagControl("Bonus standar", standardBonus, false) { standardBonus = it }
+        if (!standardBonus) Field(bonus, { bonus = it }, "Bonus dari sales atau event *")
+        Field(description, { description = it }, "Deskripsi")
+        DateButton("Tanggal SPK", date) { date = it }
+        DateButton("Promise Delivery mulai", from) { from = it; if (to < it) to = it }
+        DateButton("Promise Delivery sampai", to) { to = it }
+        if (edit != null && user.role != Role.CONSULTANT) {
+            Text("Status tambahan", fontWeight = FontWeight.Bold)
+            FlagControl("Refund kredit cair", refund, false) { refund = it }
+            FlagControl("Insentif CSI cair", csi, false) { csi = it }
+        }
+        ErrorText(error)
+        ErrorText(serverError)
+        Button({
+            when {
+                edit == null && consultant == null -> error = "Pilih sales."
+                number.length != 5 -> error = "Nomor SPK harus tepat 5 angka."
+                customer.isBlank() || phone.isBlank() || (!standardBonus && bonus.isBlank()) -> error = "Lengkapi kolom bertanda *."
+                qty.toIntOrNull()?.let { it > 0 } != true -> error = "Jumlah harus lebih dari nol."
+                to < from -> error = "Tanggal akhir Promise Delivery terlalu awal."
+                !sameOtr && (price.isBlank() || price.length > 16) -> error = "Harga deal harus angka."
+                payment == "credit" && (tenor.toIntOrNull()?.let { it in 1..600 } != true || tdp.isBlank()) -> error = "Isi tenor dan TDP berupa angka."
+                else -> {
+                    error = ""
+                    val body = JSONObject().put("number", "LOT - $number").put("date", date.toString())
+                        .put("customerName", customer.trim()).put("clientType", clientType).put("phone", phone.trim())
+                        .put("carType", car).put("color", color).put("quantity", qty.toInt()).put("sameAsOtr", sameOtr)
+                        .put("dealPrice", if (sameOtr) JSONObject.NULL else price).put("payment", payment)
+                        .put("bonus", if (standardBonus) "Bonus standar" else bonus.trim()).put("description", description.trim())
+                        .put("promiseFrom", from.toString()).put("promiseTo", to.toString())
+                    if (edit == null) body.put("consultantId", consultant!!.id)
+                    if (payment == "credit") body.put("tenorMonths", tenor.toInt()).put("tdp", tdp).put("insurance", insurance)
+                    else body.put("tenorMonths", JSONObject.NULL).put("tdp", JSONObject.NULL).put("insurance", JSONObject.NULL)
+                    if (edit != null && user.role != Role.CONSULTANT) body.put("refundCredit", refund).put("incentiveCsi", csi)
+                    save(body)
+                }
+            }
+        }, enabled = !saving, modifier = Modifier.fillMaxWidth()) { Text(if (saving) "Menyimpan…" else "Simpan SPK") }
+    }
 }
 
 @Composable
@@ -414,7 +508,7 @@ private fun ProspectScreen(api: ApiClient, consultants: List<User>, reload: Int,
                         Text(item.name, fontWeight = FontWeight.Bold); Text("Mau: ${item.want}"); Text("Tahap: ${item.stage}")
                         if (expanded == item.id) {
                             Text("Riwayat", fontWeight = FontWeight.Bold)
-                            history.forEach { Text("${it.createdAt}: ${it.want} — ${it.stage}", fontSize = 12.sp) }
+                            history.forEach { Text("${runCatching { dateLabel(LocalDate.parse(it.createdAt)) }.getOrDefault(it.createdAt)}: ${it.want} — ${it.stage}", fontSize = 12.sp) }
                             Field(want, { want = it }, "Mau apa berikutnya"); Field(stage, { stage = it }, "Tahap berikutnya")
                             Button({ scope.launch { try { api.updateProspect(item.id, JSONObject().put("want", want).put("stage", stage)); changed() } catch (e: Exception) { error = friendly(e) } } }, enabled = want.isNotBlank() && stage.isNotBlank()) { Text("Simpan tindak lanjut") }
                             Row { TextButton({ scope.launch { try { api.updateProspect(item.id, JSONObject().put("status", "berhasil")); changed() } catch (e: Exception) { error = friendly(e) } } }) { Text("Berhasil") }
@@ -444,6 +538,7 @@ private fun AccountsScreen(api: ApiClient, users: List<User>, changed: () -> Uni
     var showAdd by remember { mutableStateOf(false) }; var error by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf<String?>(null) }
     var resetUser by remember { mutableStateOf<User?>(null) }
+    var deleteUser by remember { mutableStateOf<User?>(null) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     fun act(account: User, action: String) {
@@ -471,6 +566,9 @@ private fun AccountsScreen(api: ApiClient, users: List<User>, changed: () -> Uni
                     if (selected == account.id) {
                         AccountActions(account, busy, account.id != api.currentUser?.id,
                             { act(account, if (account.active) "disable" else "enable") }, { error = ""; resetUser = account })
+                        if (account.id != api.currentUser?.id) TextButton({ deleteUser = account }, enabled = !busy) {
+                            Text("Hapus akun", color = MaterialTheme.colorScheme.error)
+                        }
                         if (account.role == Role.SUPERVISOR) {
                             HorizontalDivider()
                             Text("Sales", fontWeight = FontWeight.Bold)
@@ -480,11 +578,18 @@ private fun AccountsScreen(api: ApiClient, users: List<User>, changed: () -> Uni
                             team.forEach { consultant ->
                                 ConsultantAccountCard(consultant, busy,
                                     { act(consultant, if (consultant.active) "disable" else "enable") },
-                                    { error = ""; resetUser = consultant })
+                                    { error = ""; resetUser = consultant }, { deleteUser = consultant })
                             }
                         }
                     }
                 } }
+            }
+            val orphans = users.filter { it.role == Role.CONSULTANT && it.supervisorId == null }
+            if (orphans.isNotEmpty()) item { Text("Sales tanpa supervisor", fontWeight = FontWeight.Bold) }
+            items(orphans, key = { it.id }) { consultant ->
+                ConsultantAccountCard(consultant, busy,
+                    { act(consultant, if (consultant.active) "disable" else "enable") },
+                    { error = ""; resetUser = consultant }, { deleteUser = consultant })
             }
         }
     }
@@ -500,6 +605,20 @@ private fun AccountsScreen(api: ApiClient, users: List<User>, changed: () -> Uni
             finally { busy = false }
         }
     } }
+    deleteUser?.let { account -> AlertDialog(onDismissRequest = { deleteUser = null },
+        title = { Text("Hapus akun ${account.displayName}?") },
+        text = { Text(if (account.role == Role.SUPERVISOR)
+            "Sales di bawah supervisor ini akan menjadi tanpa supervisor. Riwayat SPK tetap menyimpan nama supervisor dan sales. Akun tidak dapat masuk lagi."
+            else "Akun tidak dapat masuk lagi. SPK dan prospek tetap tersimpan dengan nama sales.") },
+        confirmButton = { TextButton({
+            busy = true; error = ""
+            scope.launch {
+                try { api.deleteUser(account.id); deleteUser = null; changed() }
+                catch (e: Exception) { error = friendly(e) }
+                finally { busy = false }
+            }
+        }, enabled = !busy) { Text("Hapus") } },
+        dismissButton = { TextButton({ deleteUser = null }) { Text("Batal") } }) }
 }
 
 @Composable
@@ -521,7 +640,7 @@ private fun AccountActions(account: User, busy: Boolean, canToggle: Boolean, tog
 }
 
 @Composable
-private fun ConsultantAccountCard(account: User, busy: Boolean, toggle: () -> Unit, reset: () -> Unit) {
+private fun ConsultantAccountCard(account: User, busy: Boolean, toggle: () -> Unit, reset: () -> Unit, delete: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Column(Modifier.fillMaxWidth().clickable { open = !open }) {
@@ -530,7 +649,10 @@ private fun ConsultantAccountCard(account: User, busy: Boolean, toggle: () -> Un
             AccountStatus(account)
             Text("SPK bulan ini: ${account.currentMonthSpks} · Prospek berjalan: ${account.runningProspects}")
         }
-        if (open) AccountActions(account, busy, true, toggle, reset)
+        if (open) {
+            AccountActions(account, busy, true, toggle, reset)
+            TextButton(delete, enabled = !busy) { Text("Hapus akun", color = MaterialTheme.colorScheme.error) }
+        }
     } }
 }
 
@@ -620,7 +742,7 @@ private fun AddAccountDialog(users: List<User>, dismiss: () -> Unit, save: (Stri
 @Composable private fun DateButton(label: String, value: LocalDate, changed: (LocalDate) -> Unit) {
     val context = LocalContext.current
     OutlinedButton({ DatePickerDialog(context, { _, y, m, d -> changed(LocalDate.of(y, m + 1, d)) },
-        value.year, value.monthValue - 1, value.dayOfMonth).show() }, Modifier.fillMaxWidth()) { Text("$label: $value") }
+        value.year, value.monthValue - 1, value.dayOfMonth).show() }, Modifier.fillMaxWidth()) { Text("$label: ${dateLabel(value)}") }
 }
 
 @Composable private fun ErrorText(message: String) { if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.error) }

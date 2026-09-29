@@ -8,8 +8,8 @@ export const POST = handle(async (request) => {
   const result = await transaction(async (db) => {
     const session = await db.query(`select s.id,u.id as user_id,u.username,u.display_name,u.role,u.supervisor_id,u.must_change_password
       from refresh_session s join app_user u on u.id=s.user_id
-      where s.token_hash=$1 and s.revoked_at is null and s.expires_at>now() and u.active=true
-      and (u.role <> 'consultant' or exists (select 1 from app_user supervisor where supervisor.id=u.supervisor_id and supervisor.active=true)) for update of s`, [hashToken(oldToken)]);
+      where s.token_hash=$1 and s.revoked_at is null and u.active=true and u.deleted_at is null
+      and (u.role <> 'consultant' or u.supervisor_id is null or exists (select 1 from app_user supervisor where supervisor.id=u.supervisor_id and supervisor.active=true and supervisor.deleted_at is null)) for update of s`, [hashToken(oldToken)]);
     if (!session.rowCount) throw new ApiError(401, 'Invalid or expired refresh token');
     const row = session.rows[0];
     await db.query('update refresh_session set revoked_at=now(),last_used_at=now() where id=$1', [row.id]);

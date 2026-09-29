@@ -38,6 +38,7 @@ android {
 
     defaultConfig {
         applicationId = "com.mahesajenar.crmforteam"
+        manifestPlaceholders["appLabel"] = "CRM for Team"
         minSdk = 26
         targetSdk = 35
         versionCode = appVersionCode
@@ -56,6 +57,10 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".debug"
+            manifestPlaceholders["appLabel"] = "CRM for Team (Test)"
+        }
         getByName("release") {
             isMinifyEnabled = false
             if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")

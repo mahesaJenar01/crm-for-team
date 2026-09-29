@@ -4,6 +4,16 @@
   "version": "0.1.0",
   "type": "module",
   "engines": { "node": ">=22" },
-  "scripts": { "typecheck": "tsc --noEmit" },
-  "devDependencies": { "typescript": "^5.9.0", "@types/node": "^22.0.0" }
+  "scripts": { "typecheck": "tsc --noEmit", "test": "tsc -p tsconfig.test.json && node --test tests/*.test.mjs" },
+  "dependencies": {
+    "@vercel/functions": "^3.5.0",
+    "bcryptjs": "^3.0.2",
+    "jose": "^6.1.0",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.15.5",
+    "typescript": "^5.9.0"
+  }
 }

@@ -1,5 +1,46 @@
 # Vercel server implementation plan
 
+## Current implementation (September 2026)
+
+The deployed `/api/health` endpoint is working. The repository now also contains
+authentication, master-managed accounts, SPKs, and prospects. These new routes are
+**not live until the following steps are completed and the code is pushed to GitHub**.
+The Android app still uses its in-memory demo repository. Do not enter real customer
+details or identity documents into the app yet.
+
+1. In Neon's SQL Editor, run `server/migrations/001_auth.sql` against the same `main`
+   branch and `neondb` database where `server/schema.sql` was run. It adds refresh
+   sessions, login throttling, audit metadata, and case-insensitive unique indexes.
+   It is safe to rerun if a query was interrupted.
+2. Verify that Vercel project `crm-for-team-server` has a Production environment
+   variable named `DATABASE_URL` or `STORAGE_DATABASE_URL`. The Neon integration
+   should supply it automatically. Do not copy its value into Git or chat.
+3. Run `server/scripts/new-secrets.ps1` locally. In Vercel project Settings →
+   Environment Variables, add the generated `JWT_SECRET` and `BOOTSTRAP_SECRET`
+   for Production. Keep both values private.
+4. Push the changed `server` files to GitHub and wait for Vercel's new deployment
+   to say Ready. A deployment made before step 3 will not have working API routes.
+5. Run `server/scripts/bootstrap.ps1` locally. It prompts for the bootstrap secret,
+   a master username, display name, and initial password without placing the values
+   in the command line. The master account can be created only once.
+6. Run `server/scripts/change-password.ps1` to change that initial password.
+   Then delete `BOOTSTRAP_SECRET` from Vercel Environment Variables and redeploy.
+   Keep `JWT_SECRET`; changing it later invalidates all access tokens.
+
+The implemented routes are `POST /api/auth/bootstrap`, `login`, `refresh`, `logout`,
+and `password`; `GET/POST/PATCH /api/users`; `GET/POST /api/spks`;
+`GET/PATCH/DELETE /api/spks/item?id=<uuid>`; `GET/POST /api/prospects`; and
+`GET/PATCH /api/prospects/item?id=<uuid>`. Apart from bootstrap, login, refresh,
+and logout, routes require `Authorization: Bearer <accessToken>`. Newly created
+accounts must change their temporary password before using CRM routes. SPK updates
+require the current `revision` and a `changes` object. Lists have 25 rows per page.
+
+Document uploads, dashboard summaries, and Android synchronization are **not yet
+implemented**. No document data should be uploaded until private storage, file
+validation, and scanning exist. The server routes have local type checks and
+authorization-rule tests, but they have not yet been exercised against the live
+Neon database.
+
 The Android app currently provides a safe-to-explore offline simulation. Do not put
 real KTP, KK, NPWP, NIB, customer, or password data into it until this server and its
 access controls are deployed.

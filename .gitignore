@@ -21,6 +21,8 @@ keystore.properties
 *.hprof
 hs_err_pid*.log
 node_modules/
+.pnpm-store/
+.test-build/
 
 # Local release artifacts
 dist/

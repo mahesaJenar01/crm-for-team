@@ -9,8 +9,10 @@ async function master(request: Request) {
 }
 
 export const GET = handle(async (request) => {
-  await master(request);
-  const { rows } = await pool.query('select id,username,display_name as "displayName",role,supervisor_id as "supervisorId",active,must_change_password as "mustChangePassword",created_at as "createdAt" from app_user order by created_at,id');
+  const actor = await requireActor(request);
+  if (actor.role === 'consultant') throw new ApiError(403, 'Supervisor or master required');
+  const scope = actor.role === 'supervisor' ? ' where id=$1 or supervisor_id=$1' : '';
+  const { rows } = await pool.query(`select id,username,display_name as "displayName",role,supervisor_id as "supervisorId",active,must_change_password as "mustChangePassword",created_at as "createdAt" from app_user${scope} order by created_at,id`, actor.role === 'supervisor' ? [actor.id] : []);
   return json({ users: rows });
 });
 

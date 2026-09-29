@@ -1,24 +1,24 @@
 # CRM for Team
 
-Android CRM prototype for Mahesa Jenar's sales team. The application ID is
+Android CRM for Mahesa Jenar's sales team. The application ID is
 `com.mahesajenar.crmforteam`; keep it unchanged after the first public release.
 
 ## What works now
 
 - Master, sales supervisor, and sales consultant experiences.
 - Master-only account creation.
-- SPK creation with retail/fleet documents, credit details, delivery date ranges,
+- SPK creation with credit details, delivery date ranges,
   automatic Open status, current-month filtering, lifetime outstanding view, and
   25-row pagination.
 - Supervisor visibility and controls for team SPKs, VIN allocation, delivery,
   cancellation, refund, and DMS/CSI incentives.
-- Supervisor prospect tracking and simulation data.
+- Live SPKs, prospects, and accounts through the Vercel API and Neon database.
+- Staff first-login password change and server-managed sessions.
 
-This first build is an offline prototype: changes live in memory and reset after the
-app process is restarted. The bundled master login uses the credentials provided to
-the project owner; only a one-way verifier is stored in source. Demo logins are shown
-on the login screen. Before real staff or customer documents are used, implement the
-server plan in [SERVER.md](SERVER.md); client-side role checks are not security.
+The app needs internet access. It does not store passwords or session tokens on the
+phone; users sign in again after closing the app. Changes are saved to the server.
+Document upload is not available yet, so do not use the app to collect identity
+documents. See [SERVER.md](SERVER.md) for server details and future work.
 
 ## Obtainium via GitHub Releases
 

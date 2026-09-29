@@ -1,6 +1,7 @@
 # Android / Gradle
 .gradle/
 .gradle-user-home/
+.android-user-home/
 .kotlin/
 build/
 **/build/

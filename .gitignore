@@ -1,0 +1,31 @@
+# Android / Gradle
+.gradle/
+.gradle-user-home/
+.kotlin/
+build/
+**/build/
+local.properties
+*.iml
+.idea/
+
+# Signing secrets and private keys (never commit these)
+keystore.properties
+*.jks
+*.keystore
+.env
+.env.*
+!.env.example
+.vercel/
+*.p12
+*.pfx
+*.hprof
+hs_err_pid*.log
+node_modules/
+
+# Local release artifacts
+dist/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+*.swp

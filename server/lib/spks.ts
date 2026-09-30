@@ -66,9 +66,48 @@ export function validateSpkChanges(input: Record<string, unknown>, role: Actor['
   return output;
 }
 
-export function validateSpkState(spk: { promiseFrom: string; promiseTo: string; payment: string; tenorMonths: number | null; tdp: string | null; delivered: boolean; status: string; deliveredDate: string | null }): void {
+export type SpkState = {
+  promiseFrom: string; promiseTo: string; payment: string; tenorMonths: number | null; tdp: string | null;
+  delivered: boolean; status: string; deliveredDate: string | null;
+  fullyPaid: boolean; crmDone: boolean; incentiveDms: boolean; deliveryPlanned: boolean;
+  planDoDate: string | null; vin: string | null; vinAllocated: string | null;
+};
+
+export function jakartaToday(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+}
+
+/** Apply dependent checklist changes after locking the latest SPK. */
+export function prepareSpkUpdate(input: Record<string, unknown>, before: SpkState, today = jakartaToday()): Record<string, unknown> {
+  const changes = { ...input };
+  if ('vin' in changes && changes.vin !== before.vin) {
+    changes.vin_allocated = changes.vin ? today : null;
+  }
+  if (changes.delivered === true) {
+    if (changes.status === 'cancelled') throw new ApiError(400, 'Delivered SPK cannot be cancelled');
+    changes.status = 'closed';
+    if (!('delivered_date' in changes)) changes.delivered_date = before.deliveredDate ?? today;
+    if (!(changes.delivery_planned ?? before.deliveryPlanned)) {
+      changes.delivery_planned = true;
+      changes.plan_do_date = today;
+    }
+  }
+  return changes;
+}
+
+export function validateSpkState(spk: SpkState, before?: SpkState): void {
   if (spk.promiseTo < spk.promiseFrom) throw new ApiError(400, 'Promise end date must be on or after start date');
   if (spk.payment === 'credit' && (spk.tenorMonths === null || spk.tdp === null)) throw new ApiError(400, 'Credit SPK requires tenorMonths and tdp');
   if (spk.delivered && (spk.status !== 'closed' || !spk.deliveredDate)) throw new ApiError(400, 'Delivered SPK must be closed and have deliveredDate');
   if (spk.status === 'cancelled' && spk.delivered) throw new ApiError(400, 'Delivered SPK cannot be cancelled');
+  // Existing records from the old workflow can be corrected incrementally. Never
+  // invent payment/CRM/DMS history or allow a new violation of these rules.
+  if (spk.deliveryPlanned && !spk.fullyPaid && (!before?.deliveryPlanned || before.fullyPaid))
+    throw new ApiError(400, 'Plan DO hanya dapat dicentang setelah Lunas.');
+  const removedDeliveryPrerequisite = before && (
+    (before.fullyPaid && !spk.fullyPaid) || (before.incentiveDms && !spk.incentiveDms) || (before.crmDone && !spk.crmDone));
+  if (spk.delivered && (!spk.fullyPaid || !spk.incentiveDms || !spk.crmDone) && (!before?.delivered || removedDeliveryPrerequisite))
+    throw new ApiError(400, 'Dikirim hanya dapat dicentang setelah Lunas, DMS, dan CRM.');
+  if (spk.delivered && !spk.deliveryPlanned && (!before?.delivered || before.deliveryPlanned))
+    throw new ApiError(400, 'SPK yang dikirim harus memiliki Plan DO.');
 }

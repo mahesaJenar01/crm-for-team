@@ -25,6 +25,25 @@ Protected routes require `Authorization: Bearer <accessToken>`. New accounts mus
 change their temporary password before using CRM data. Lists contain 25 rows per
 page. SPK updates include the latest `revision` and a `changes` object.
 
+SPK lists accept `month=YYYY-MM` and `status=all|open|closed|cancelled` (default
+`all`). The outstanding list continues to include all open SPKs across months.
+Prospect lists accept `month=YYYY-MM`, `status=all|running|completed`, and an
+optional `consultantId`; these filters also apply to the total and pagination and
+never bypass role visibility. Prospect months use `created_at` in Asia/Jakarta;
+completed includes both `berhasil` and `gagal`.
+
+The server enforces paid status before Plan DO and paid/DMS/CRM before delivery.
+Delivery automatically closes the SPK and checks Plan DO only if it was unchecked.
+An existing Plan DO and date are preserved. Dependent flags cannot be unchecked
+while delivery remains checked. Supervisors and the master may supply optional
+`vin` on creation or editing; its allocation date is maintained by the server.
+Old SPKs that predate these checklist rules remain editable and can be corrected
+incrementally, without automatically inventing paid/CRM/DMS history. Updates may
+not introduce a new dependency violation or remove a checked prerequisite.
+These changes use existing database fields and require no new migration. Deploy
+the server changes together with the updated Android app to enable the filters
+and Noka on creation.
+
 ## Remaining work before collecting identity documents
 
 There is no document upload or download route. The Android form does not accept

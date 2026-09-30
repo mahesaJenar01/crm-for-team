@@ -12,7 +12,15 @@ Android CRM for Mahesa Jenar's sales team. The application ID is
 - Full-page SPK creation and editing with credit details, delivery date ranges,
   automatic Open status, current-month filtering, lifetime outstanding view, and
   25-row pagination.
-- Supervisor visibility and controls for team SPKs, Noka allocation, delivery,
+- SPK status filters (All by default, Open, Closed, Cancelled), with yellow open,
+  green closed, and black cancelled cards. Noka allocation is entered only in the
+  SPK creation/edit form by supervisors or the master.
+- Delivery requires Lunas, DMS, and CRM; Plan DO requires Lunas and is automatically
+  checked on delivery if not already planned, retaining an existing Plan DO date.
+- Prospects default to the current creation month and Prospek berjalan. Successful
+  and failed prospects are archived under Prospek selesai, with green and red cards
+  and read-only follow-up history.
+- Supervisor visibility and controls for team SPKs, delivery,
   cancellation, refund, and DMS/CSI incentives.
 - Live SPKs, prospects, and accounts through the Vercel API and Neon database.
 - Staff first-login password change and persistent server-managed sessions until logout.

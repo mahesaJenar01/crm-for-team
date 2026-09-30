@@ -3,14 +3,15 @@ import { audit, requireActor } from '../lib/auth.js';
 import { consultantForSpk } from '../lib/spks.js';
 import { prospectSelect } from '../lib/prospects.js';
 import { body, handle, integer, json, string } from '../lib/http.js';
+import { listFilters } from '../lib/list-filters.js';
 
 export const GET = handle(async (request) => {
   const actor = await requireActor(request);
-  const page = integer(Number(new URL(request.url).searchParams.get('page') ?? '1'), 'page', 1, 100000);
-  const where = actor.role === 'master' ? '' : actor.role === 'supervisor' ? ' where consultant_id in (select id from app_user where supervisor_id=$1)' : ' where consultant_id=$1';
-  const scope = actor.role === 'master' ? [] : [actor.id];
-  const total = await pool.query(`select count(*)::integer as total from prospect${where}`, scope);
-  const rows = await pool.query(`${prospectSelect}${where} order by updated_at desc,id desc limit 25 offset $${scope.length + 1}`, [...scope, (page - 1) * 25]);
+  const params = new URL(request.url).searchParams;
+  const page = integer(Number(params.get('page') ?? '1'), 'page', 1, 100000);
+  const { clause, values } = listFilters(actor, params, 'prospect');
+  const total = await pool.query(`select count(*)::integer as total from prospect${clause}`, values);
+  const rows = await pool.query(`${prospectSelect}${clause} order by updated_at desc,id desc limit 25 offset $${values.length + 1}`, [...values, (page - 1) * 25]);
   return json({ prospects: rows.rows, page, pageSize: 25, total: total.rows[0].total });
 });
 

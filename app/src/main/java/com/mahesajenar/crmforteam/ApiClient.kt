@@ -141,8 +141,8 @@ class ApiClient(context: Context) {
         return user(request("POST", "/api/users", body).getJSONObject("user"))
     }
 
-    suspend fun spks(month: String? = null, outstanding: Boolean = false, page: Int = 1): PageResult<Spk> {
-        val query = if (outstanding) "outstanding=true" else "month=$month"
+    suspend fun spks(month: String? = null, outstanding: Boolean = false, page: Int = 1, status: String = "all"): PageResult<Spk> {
+        val query = if (outstanding) "outstanding=true" else "month=$month&status=$status"
         val json = request("GET", "/api/spks?$query&page=$page")
         return PageResult(json.getJSONArray("spks").asObjects().map(::spk), json.getInt("total"))
     }
@@ -152,8 +152,13 @@ class ApiClient(context: Context) {
         JSONObject().put("revision", item.revision).put("changes", changes)).getJSONObject("spk"))
     suspend fun deleteSpk(id: String) { request("DELETE", "/api/spks/item?id=$id") }
 
-    suspend fun prospects(page: Int = 1): PageResult<Prospect> {
-        val json = request("GET", "/api/prospects?page=$page")
+    suspend fun prospects(page: Int = 1, month: String? = null, status: String = "all", consultantId: String? = null): PageResult<Prospect> {
+        val query = buildString {
+            append("page=$page&status=$status")
+            if (month != null) append("&month=$month")
+            if (consultantId != null) append("&consultantId=$consultantId")
+        }
+        val json = request("GET", "/api/prospects?$query")
         return PageResult(json.getJSONArray("prospects").asObjects().map(::prospect), json.getInt("total"))
     }
     suspend fun prospectHistory(id: String): List<ProspectHistory> =

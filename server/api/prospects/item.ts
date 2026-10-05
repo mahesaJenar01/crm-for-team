@@ -41,6 +41,7 @@ export const PATCH = handle(async (request) => {
   if ('status' in payload) changes.status = oneOf(payload.status, 'status', ['pending', 'berhasil', 'gagal'] as const);
   const prospect = await transaction(async (db) => {
     const before = await visible(db, actor, id, true);
+    if (before.status !== 'pending') throw new ApiError(409, 'Completed prospects are read-only');
     const fields = Object.keys(changes);
     await db.query(`update prospect set ${fields.map((field, i) => `${field}=$${i + 1}`).join(',')},updated_at=now() where id=$${fields.length + 1}`,
       [...fields.map((field) => changes[field]), id]);

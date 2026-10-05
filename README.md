@@ -1,5 +1,10 @@
 # CRM for Team
 
+The repository contains `app` (Android), `web` (browser), and `server` (shared API).
+Android and web use the same accounts and database. For web setup, deployment,
+and verification, see [web/README.md](web/README.md). On Windows, `run-web.bat`
+starts the web client locally.
+
 Android CRM for Mahesa Jenar's sales team. The application ID is
 `com.mahesajenar.crmforteam`; keep it unchanged after the first public release.
 

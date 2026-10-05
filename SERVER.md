@@ -14,6 +14,10 @@ and triggers a reload rather than silently overwriting another edit.
 
 ## API routes
 
+The web client in `web` uses the same routes through a same-origin browser gateway.
+Its HttpOnly cookies are translated into the existing bearer/refresh-token API.
+The Android token protocol remains unchanged. See [web/README.md](web/README.md).
+
 - `GET /api/health`
 - `POST /api/auth/login`, `/api/auth/refresh`, `/api/auth/logout`, `/api/auth/password`
 - `GET/POST/PATCH/DELETE /api/users` (master manages accounts; supervisors can read only
@@ -31,6 +35,7 @@ Prospect lists accept `month=YYYY-MM`, `status=all|running|completed`, and an
 optional `consultantId`; these filters also apply to the total and pagination and
 never bypass role visibility. Prospect months use `created_at` in Asia/Jakarta;
 completed includes both `berhasil` and `gagal`.
+Completed prospects are read-only at the API as well as in both client interfaces.
 
 The server enforces paid status before Plan DO and paid/DMS/CRM before delivery.
 Delivery automatically closes the SPK and checks Plan DO only if it was unchecked.
